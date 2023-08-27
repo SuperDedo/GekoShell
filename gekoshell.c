@@ -10,6 +10,54 @@
 #define GSL_PL_BUFSIZE 32
 #define GSL_RL_DELIM " \n\r\a\t"
 
+//declaring builtin functions
+int gsl_cd(char **args);
+int gsl_exit(char **args);
+int gsl_help(char **args);
+
+char *builtin_str[]={
+    "cd",
+    "exit",
+    "help"
+};
+
+int (*builtin_func[])(char **) = {
+    &gsl_cd,
+    &gsl_exit,
+    &gsl_help
+};
+
+int gsl_num_builtins(){
+    return sizeof(builtin_str)/sizeof(char *);
+}
+
+int gsl_cd(char **args){
+    if(args[1] == NULL){
+        fprintf(stderr, "gsl: expected 1 argument fo \"cd\"\n");
+    }else{
+        if(chdir(args[1])!=0){
+            perror("gsl");
+        }
+    }
+    return 1;
+}
+
+int gsl_exit(char **args){
+    return 0;
+}
+
+int gsl_help(char **args){
+    int i;
+    printf("Geko's Shell\n");
+    printf("You can enter program and its arguments for it to run\n");
+    printf("or you can use one of the follwing builtin functions: \n");
+    for (i = 0; i < gsl_num_builtins(); i++) {
+        printf("  %s\n", builtin_str[i]);
+    }
+
+    printf("Use the \"man\" for information on other commands\n");
+    return 1;
+}
 
 int gsl_launch(char **args){
     pid_t cpid;
@@ -29,6 +77,22 @@ int gsl_launch(char **args){
     }
 
     return 1;
+}
+
+int gsl_execute(char **args){
+    int i = 0;
+    
+    if(args[0]==NULL){
+        return 1;
+    }
+
+    for(i = 0; i < gsl_num_builtins(); i++){
+        if(strcmp(args[0], builtin_str[i]) == 0){
+            return (*builtin_func[i])(args);
+        }
+    }
+
+    return gsl_launch(args);
 }
 
 char **gsl_parse_line(char *line){
@@ -103,8 +167,7 @@ void gsl_loop(void){
         printf(">");
         line = gsl_read_line();
         args = gsl_parse_line(line);
-        //status = gsl_exe(args);
-        status = 0;
+        status = gsl_execute(args);
 
         free(line);
         free(args);
