@@ -27,6 +27,12 @@ int (*builtin_func[])(char **) = {
     &gsl_help
 };
 
+typedef struct{
+    char *progname;
+    char *args[];
+} command_struct;
+
+
 int gsl_num_builtins(){
     return sizeof(builtin_str)/sizeof(char *);
 }
@@ -59,7 +65,7 @@ int gsl_help(char **args){
     return 1;
 }
 
-int gsl_launch(char **args){
+int gsl_launch(command_struct *command){
     pid_t cpid;
     int status;
 
@@ -67,7 +73,7 @@ int gsl_launch(char **args){
     if(cpid < 0){
         fprintf(stderr, "gsl: forking error\n");
     } else if(cpid == 0){
-        execvp(args[0], args);
+        execvp(command->progname, command->args);
         fprintf(stderr, "gsl: executing error\n");
         exit(EXIT_FAILURE);
     } else if(cpid > 0){
@@ -79,40 +85,40 @@ int gsl_launch(char **args){
     return 1;
 }
 
-int gsl_execute(char **args){
+int gsl_execute(command_struct *command){
     int i = 0;
     
-    if(args[0]==NULL){
+    if(command->progname==NULL){
         return 1;
     }
 
     for(i = 0; i < gsl_num_builtins(); i++){
-        if(strcmp(args[0], builtin_str[i]) == 0){
-            return (*builtin_func[i])(args);
+        if(strcmp(command->progname, builtin_str[i]) == 0){
+            return (*builtin_func[i])(command->args);
         }
     }
 
-    return gsl_launch(args);
+    return gsl_launch(command);
 }
 
-char **gsl_parse_line(char *line){
+command_struct *gsl_parse_line(char *line){
     int bufsize = GSL_PL_BUFSIZE;
     int position = 0;
-    char **args = malloc(sizeof(char*) * bufsize);
     char *token;
-    if(!args){
+    command_struct *command = malloc(sizeof(command_struct)+ sizeof(char*) * bufsize);
+    if(!command){
         fprintf(stderr, "gsl: allocation error\n");
         exit(EXIT_FAILURE);
     }
     token = strtok(line, GSL_RL_DELIM);
     while(token != NULL){
-        args[position] = token;
+        command->args[position] = token;
         position++;
 
         if(bufsize <= position){
             bufsize += GSL_PL_BUFSIZE;
-            args  = realloc(args, sizeof(char*) * bufsize);
-                if(!args){
+            command = realloc(command, sizeof(command_struct)+ sizeof(char*) * bufsize);
+                if(!command){
                     fprintf(stderr, "gsl: allocation error\n");
                     exit(EXIT_FAILURE);
                 }
@@ -120,8 +126,9 @@ char **gsl_parse_line(char *line){
         token = strtok(NULL, GSL_RL_DELIM);
 
     }
-    args[position] = NULL;
-    return args;
+    command->args[position] = NULL;
+    command->progname = command->args[0];
+    return command;
 }
 
 char *gsl_read_line(){
@@ -159,18 +166,18 @@ char *gsl_read_line(){
 
 void gsl_loop(void){
     char* line;
-    char** args;
+    command_struct *command;
     int status;
 
 
     do{
         printf(">");
         line = gsl_read_line();
-        args = gsl_parse_line(line);
-        status = gsl_execute(args);
+        command = gsl_parse_line(line);
+        status = gsl_execute(command);
 
         free(line);
-        free(args);
+        free(command);
 
     } while(status);
     
