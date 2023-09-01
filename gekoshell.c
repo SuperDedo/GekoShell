@@ -147,21 +147,20 @@ int gsl_execute_pipe(pipe_struct *pipeline){
 
 
 
-/*int gsl_execute(command_struct *command){
+int gsl_execute(pipe_struct *pipeline){
     int i = 0;
     
-    if(command->progname==NULL){
-        return 1;
-    }
-
-    for(i = 0; i < gsl_num_builtins(); i++){
-        if(strcmp(command->progname, builtin_str[i]) == 0){
-            return (*builtin_func[i])(command->args);
+    if(pipeline->num_of_commands == 1){
+        for(i = 0; i < gsl_num_builtins(); i++){
+            if(strcmp(pipeline->commands[0]->progname, builtin_str[i]) == 0){
+                return (*builtin_func[i])(pipeline->commands[0]->args);
+            }
         }
     }
 
-    return gsl_launch(command);
-}*/
+
+    return gsl_execute_pipe(pipeline);
+}
 
 command_struct *gsl_parse_command(char *line){
     int bufsize = GSL_PL_BUFSIZE;
@@ -269,7 +268,7 @@ void gsl_loop(void){
         //needed because strsep changes line
         copy_line = line;
         pipeline = gsl_parse_pipeline(line);
-        status = gsl_execute_pipe(pipeline);
+        status = gsl_execute(pipeline);
 
         free(copy_line);
         for(i = 0; i<pipeline->num_of_commands; i++){
