@@ -9,6 +9,7 @@
 #define GSL_RL_BUFSIZE 64
 #define GSL_PL_BUFSIZE 32
 #define GSL_RL_DELIM " \n\r\a\t"
+#define GSL_PIPE_DELIM "|" 
 
 //declaring builtin functions
 int gsl_cd(char **args);
@@ -29,8 +30,16 @@ int (*builtin_func[])(char **) = {
 
 typedef struct{
     char *progname;
+    //reidrect[0] = input fd, redirect[1] = output, equels -1 for defult value
+    int redirect[2];
     char *args[];
 } command_struct;
+
+typedef struct { 
+    int num_of_commands;
+    command_struct* commands[];
+} pipe_struct;
+
 
 
 int gsl_num_builtins(){
@@ -61,11 +70,32 @@ int gsl_help(char **args){
         printf("  %s\n", builtin_str[i]);
     }
 
-    printf("Use the \"man\" for information on other commands\n");
+    printf("Use the \"man\" command for information on other commands\n");
     return 1;
 }
 
-int gsl_launch(command_struct *command){
+void close_all_pipes(int (*pipes)[2], int num_of_pipes){
+    int i = 0;
+
+    for(i = 0; i < num_of_pipes; i++){
+        close(pipes[i][0]);
+        close(pipes[i][1]);
+    }
+}
+
+void gsl_exec_io(command_struct *command, int (*pipes)[2], int num_of_pipes){
+    if(command->redirect[1] != -1){
+            dup2(command->redirect[1], STDOUT_FILENO);
+    } if(command->redirect[0] != -1){
+            dup2(command->redirect[0], STDIN_FILENO);
+    }
+    close_all_pipes(pipes, num_of_pipes);
+    execvp(command->progname, command->args);
+    fprintf(stderr, "gsl: executing error\n");
+    exit(EXIT_FAILURE);    
+}
+
+/*int gsl_launch(command_struct *command){
     pid_t cpid;
     int status;
 
@@ -73,9 +103,7 @@ int gsl_launch(command_struct *command){
     if(cpid < 0){
         fprintf(stderr, "gsl: forking error\n");
     } else if(cpid == 0){
-        execvp(command->progname, command->args);
-        fprintf(stderr, "gsl: executing error\n");
-        exit(EXIT_FAILURE);
+        gsl_exec_io(command);
     } else if(cpid > 0){
         do{
         waitpid(cpid, &status, WUNTRACED);
@@ -83,9 +111,43 @@ int gsl_launch(command_struct *command){
     }
 
     return 1;
+}*/
+
+
+/* can't have any builtin functions
+*/
+int gsl_execute_pipe(pipe_struct *pipeline){
+    int n = pipeline->num_of_commands;
+    int i = 0;
+    int (*pipes)[2] = malloc((n-1) * sizeof(int[2]));
+    pid_t cpid;
+
+
+    for(i = 0; i < n - 1; i++){
+        pipe(pipes[i]);
+        pipeline->commands[i]->redirect[1] = pipes[i][1];
+        pipeline->commands[i+1]->redirect[0] = pipes[i][0];
+    }
+
+    for(i = 0; i < n ; i++){
+        cpid = fork();
+        if(cpid < 0){
+            fprintf(stderr, "gsl: forking error\n");
+        } else if(cpid == 0){
+            gsl_exec_io(pipeline->commands[i], pipes, n-1);
+        }
+    }
+    close_all_pipes(pipes, n-1);
+
+    for(i = 0; i < n ; i++){
+        wait(NULL);
+    }
+    return 1;
 }
 
-int gsl_execute(command_struct *command){
+
+
+/*int gsl_execute(command_struct *command){
     int i = 0;
     
     if(command->progname==NULL){
@@ -99,9 +161,9 @@ int gsl_execute(command_struct *command){
     }
 
     return gsl_launch(command);
-}
+}*/
 
-command_struct *gsl_parse_line(char *line){
+command_struct *gsl_parse_command(char *line){
     int bufsize = GSL_PL_BUFSIZE;
     int position = 0;
     char *token;
@@ -110,7 +172,7 @@ command_struct *gsl_parse_line(char *line){
         fprintf(stderr, "gsl: allocation error\n");
         exit(EXIT_FAILURE);
     }
-    token = strtok(line, GSL_RL_DELIM);
+    token = strsep(&line, GSL_RL_DELIM);
     while(token != NULL){
         command->args[position] = token;
         position++;
@@ -123,12 +185,44 @@ command_struct *gsl_parse_line(char *line){
                     exit(EXIT_FAILURE);
                 }
         }        
-        token = strtok(NULL, GSL_RL_DELIM);
+        token = strsep(&line, GSL_RL_DELIM);
 
     }
     command->args[position] = NULL;
     command->progname = command->args[0];
+    command->redirect[0] = -1;
+    command->redirect[1] = -1;
     return command;
+}
+
+pipe_struct *gsl_parse_pipeline(char *line){
+    int bufsize = GSL_PL_BUFSIZE;
+    int position = 0;
+    char *token;
+    pipe_struct *pipeline = malloc(sizeof(pipe_struct)+ sizeof(command_struct*) * bufsize);
+    pipeline->num_of_commands = 0;
+    if(!pipeline){
+        fprintf(stderr, "gsl: allocation error\n");
+        exit(EXIT_FAILURE);
+    }
+    token = strsep(&line, GSL_PIPE_DELIM);
+    while(token != NULL){
+        pipeline->commands[position] = gsl_parse_command(token);
+        pipeline->num_of_commands = pipeline->num_of_commands+1;
+        position++;
+
+        if(bufsize <= position){
+            bufsize += GSL_PL_BUFSIZE;
+            pipeline = realloc(pipeline, sizeof(pipe_struct)+ sizeof(command_struct*) * bufsize);
+                if(!pipeline){
+                    fprintf(stderr, "gsl: allocation error\n");
+                    exit(EXIT_FAILURE);
+                }
+        }        
+        token = strsep(&line, GSL_PIPE_DELIM);
+
+    }
+    return pipeline;
 }
 
 char *gsl_read_line(){
@@ -163,22 +257,25 @@ char *gsl_read_line(){
 
 }
 
-
 void gsl_loop(void){
-    char* line;
-    command_struct *command;
+    char* line, *copy_line;
+    pipe_struct *pipeline;
     int status;
-
+    int i = 0;
 
     do{
         printf(">");
         line = gsl_read_line();
-        command = gsl_parse_line(line);
-        status = gsl_execute(command);
+        //needed because strsep changes line
+        copy_line = line;
+        pipeline = gsl_parse_pipeline(line);
+        status = gsl_execute_pipe(pipeline);
 
-        free(line);
-        free(command);
-
+        free(copy_line);
+        for(i = 0; i<pipeline->num_of_commands; i++){
+            free(pipeline->commands[i]);
+        }
+        free(pipeline);
     } while(status);
     
 }
