@@ -14,6 +14,8 @@
 #define GSL_RL_DELIM " \n\r\a\t"
 #define GSL_PIPE_DELIM "|" 
 #define GSL_OUTPUT_REDIR_DELIM ">"
+#define GSL_INPUT_REDIR_DELIM "<"
+
 
 //declaring builtin functions
 int gsl_cd(char **args);
@@ -123,6 +125,7 @@ void gsl_exec_io(command_struct *command, int (*pipes)[2], int num_of_pipes){
 int gsl_execute_pipe(pipe_struct *pipeline){
     int n = pipeline->num_of_commands;
     int i = 0;
+    int fd;
     int (*pipes)[2] = malloc((n-1) * sizeof(int[2]));
     pid_t cpid;
 
@@ -145,6 +148,12 @@ int gsl_execute_pipe(pipe_struct *pipeline){
 
     for(i = 0; i < n ; i++){
         wait(NULL);
+    }
+    if((fd=pipeline->commands[n-1]->redirect[1]) != -1){
+        close(fd);
+    }
+    if((fd=pipeline->commands[0]->redirect[0]) != -1){
+        close(fd);
     }
     return 1;
 }
@@ -202,8 +211,10 @@ pipe_struct *gsl_parse_pipeline(char *line){
     int position = 0;
     int fd;
     char *token;
+    char *temp_line;
     char *command_line;
-    char *file;
+    char *output_file;
+    char *input_file;
     pipe_struct *pipeline = malloc(sizeof(pipe_struct)+ sizeof(command_struct*) * bufsize);
     pipeline->num_of_commands = 0;
     if(!pipeline){
@@ -211,8 +222,12 @@ pipe_struct *gsl_parse_pipeline(char *line){
         exit(EXIT_FAILURE);
     }
     //for redircting output to file 
-    command_line = strsep(&line, GSL_OUTPUT_REDIR_DELIM);
-    file = strsep(&line, GSL_OUTPUT_REDIR_DELIM);
+    temp_line = strsep(&line, GSL_OUTPUT_REDIR_DELIM);
+    output_file = strsep(&line, GSL_OUTPUT_REDIR_DELIM);
+
+    //for redircting file to input
+    command_line = strsep(&temp_line, GSL_INPUT_REDIR_DELIM);
+    input_file = strsep(&temp_line, GSL_INPUT_REDIR_DELIM);
 
     token = strsep(&command_line, GSL_PIPE_DELIM);
     while(token != NULL){
@@ -230,14 +245,22 @@ pipe_struct *gsl_parse_pipeline(char *line){
         }        
         token = strsep(&command_line, GSL_PIPE_DELIM);
     }
-    if(file != NULL){
-        fd = open(file, O_CREAT|O_WRONLY, 0644);
+    if(output_file != NULL){
+        fd = open(output_file, O_CREAT|O_WRONLY, 0644);
         if(fd == -1){
-            fprintf(stderr, "gsl: couldn't open %s\n", file);
+            fprintf(stderr, "gsl: couldn't open %s\n", output_file);
         } else {
             pipeline->commands[pipeline->num_of_commands-1]->redirect[1] = fd;
         }
     }
+    if(input_file != NULL){
+        fd = open(input_file, O_RDONLY, 0644);
+        if(fd == -1){
+            fprintf(stderr, "gsl: couldn't open %s\n", input_file);
+        }else {
+            pipeline->commands[0]->redirect[0] = fd;
+        }
+    } 
     return pipeline;
 }
 
