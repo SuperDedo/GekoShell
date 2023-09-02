@@ -4,12 +4,16 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
 
 
 #define GSL_RL_BUFSIZE 64
 #define GSL_PL_BUFSIZE 32
 #define GSL_RL_DELIM " \n\r\a\t"
 #define GSL_PIPE_DELIM "|" 
+#define GSL_OUTPUT_REDIR_DELIM ">"
 
 //declaring builtin functions
 int gsl_cd(char **args);
@@ -158,7 +162,6 @@ int gsl_execute(pipe_struct *pipeline){
         }
     }
 
-
     return gsl_execute_pipe(pipeline);
 }
 
@@ -197,14 +200,21 @@ command_struct *gsl_parse_command(char *line){
 pipe_struct *gsl_parse_pipeline(char *line){
     int bufsize = GSL_PL_BUFSIZE;
     int position = 0;
+    int fd;
     char *token;
+    char *command_line;
+    char *file;
     pipe_struct *pipeline = malloc(sizeof(pipe_struct)+ sizeof(command_struct*) * bufsize);
     pipeline->num_of_commands = 0;
     if(!pipeline){
         fprintf(stderr, "gsl: allocation error\n");
         exit(EXIT_FAILURE);
     }
-    token = strsep(&line, GSL_PIPE_DELIM);
+    //for redircting output to file 
+    command_line = strsep(&line, GSL_OUTPUT_REDIR_DELIM);
+    file = strsep(&line, GSL_OUTPUT_REDIR_DELIM);
+
+    token = strsep(&command_line, GSL_PIPE_DELIM);
     while(token != NULL){
         pipeline->commands[position] = gsl_parse_command(token);
         pipeline->num_of_commands = pipeline->num_of_commands+1;
@@ -218,8 +228,15 @@ pipe_struct *gsl_parse_pipeline(char *line){
                     exit(EXIT_FAILURE);
                 }
         }        
-        token = strsep(&line, GSL_PIPE_DELIM);
-
+        token = strsep(&command_line, GSL_PIPE_DELIM);
+    }
+    if(file != NULL){
+        fd = open(file, O_CREAT|O_WRONLY, 0644);
+        if(fd == -1){
+            fprintf(stderr, "gsl: couldn't open %s\n", file);
+        } else {
+            pipeline->commands[pipeline->num_of_commands-1]->redirect[1] = fd;
+        }
     }
     return pipeline;
 }
